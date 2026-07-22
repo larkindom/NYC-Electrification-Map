@@ -1,11 +1,14 @@
 import { useMemo, useRef } from 'react'
-import Map, { Source, Layer } from 'react-map-gl'
-import 'mapbox-gl/dist/mapbox-gl.css'
+import Map, { Source, Layer } from 'react-map-gl/maplibre'
+import 'maplibre-gl/dist/maplibre-gl.css'
 import { READINESS_FILL_EXPRESSION } from '../lib/scoring'
 
-const MAPBOX_TOKEN = import.meta.env.VITE_MAPBOX_TOKEN
-
 const NYC_INITIAL_VIEW = { longitude: -73.98, latitude: 40.75, zoom: 11 }
+
+// Free, no-key vector basemap (CARTO's Dark Matter style) instead of Mapbox —
+// MapLibre GL JS is a fully open-source fork of Mapbox GL JS with no usage
+// billing, so there's no token, no account, and no cost ceiling to manage.
+const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
 
 // PLUTO's own tax-lot polygon field (`geom`) isn't pulled per parcel — at
 // city scale that payload gets enormous fast — so parcels render as
@@ -23,6 +26,13 @@ const circleLayer = {
   },
 }
 
+// Only primitive fields go into GeoJSON properties. MapLibre serializes a
+// client-side GeoJSON source's properties the same way it would vector-tile
+// properties — nested arrays/objects (like a parcel's score breakdown) come
+// back out of queryRenderedFeatures as JSON *strings*, not the original
+// value. Keeping this to bbl + score sidesteps that entirely: the click
+// handler below just uses the bbl to look up the real parcel object from
+// React state, which was never round-tripped through the map at all.
 function parcelsToGeoJSON(parcels) {
   return {
     type: 'FeatureCollection',
@@ -31,7 +41,7 @@ function parcelsToGeoJSON(parcels) {
       .map((p) => ({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [p.longitude, p.latitude] },
-        properties: p,
+        properties: { bbl: p.bbl, readiness_score: p.readiness_score },
       })),
   }
 }
@@ -40,25 +50,20 @@ export default function ParcelMap({ parcels, onSelectParcel }) {
   const mapRef = useRef(null)
   const geojson = useMemo(() => parcelsToGeoJSON(parcels), [parcels])
 
-  if (!MAPBOX_TOKEN) {
-    return (
-      <div className="flex h-full items-center justify-center bg-neutral-950 p-6 text-center text-neutral-400">
-        Missing VITE_MAPBOX_TOKEN — set it in .env.local to render the map.
-      </div>
-    )
-  }
-
   return (
     <Map
       ref={mapRef}
-      mapboxAccessToken={MAPBOX_TOKEN}
       initialViewState={NYC_INITIAL_VIEW}
-      mapStyle="mapbox://styles/mapbox/dark-v11"
+      mapStyle={MAP_STYLE}
       interactiveLayerIds={['parcel-points']}
       onClick={(e) => {
         const feature = e.features?.[0]
-        if (feature) onSelectParcel(feature.properties)
+        if (feature) onSelectParcel(feature.properties.bbl)
       }}
+      // The map mounts inside a flex layout before that layout's final size
+      // is settled, so the canvas otherwise gets stuck at the browser's
+      // default 400x300 — force a resize once the map has actually loaded.
+      onLoad={(e) => e.target.resize()}
       style={{ width: '100%', height: '100%' }}
     >
       <Source id="parcels" type="geojson" data={geojson}>

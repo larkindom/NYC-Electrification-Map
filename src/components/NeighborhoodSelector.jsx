@@ -1,5 +1,23 @@
 import { useMemo, useState } from 'react'
 
+const BOROUGH_ORDER = ['Manhattan', 'Brooklyn', 'Bronx', 'Queens', 'Staten Island']
+
+function groupByBorough(neighborhoods) {
+  const byBorough = new Map()
+  for (const n of neighborhoods) {
+    const key = n.boroname ?? 'Other'
+    if (!byBorough.has(key)) byBorough.set(key, [])
+    byBorough.get(key).push(n)
+  }
+
+  const orderedKeys = [
+    ...BOROUGH_ORDER.filter((b) => byBorough.has(b)),
+    ...[...byBorough.keys()].filter((b) => !BOROUGH_ORDER.includes(b)).sort(),
+  ]
+
+  return orderedKeys.map((borough) => ({ borough, items: byBorough.get(borough) }))
+}
+
 export default function NeighborhoodSelector({ neighborhoods, loading, selected, onApply }) {
   const [draft, setDraft] = useState(selected)
   const [query, setQuery] = useState('')
@@ -9,6 +27,8 @@ export default function NeighborhoodSelector({ neighborhoods, loading, selected,
     if (!q) return neighborhoods
     return neighborhoods.filter((n) => n.ntaname.toLowerCase().includes(q))
   }, [neighborhoods, query])
+
+  const groups = useMemo(() => groupByBorough(filtered), [filtered])
 
   const toggle = (name) => {
     setDraft((prev) => (prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name]))
@@ -35,22 +55,28 @@ export default function NeighborhoodSelector({ neighborhoods, loading, selected,
         {loading ? (
           <div className="p-4 text-sm text-neutral-500">Loading neighborhoods...</div>
         ) : (
-          <ul>
-            {filtered.map((n) => (
-              <li key={n.ntaname}>
-                <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-neutral-800">
-                  <input
-                    type="checkbox"
-                    checked={draft.includes(n.ntaname)}
-                    onChange={() => toggle(n.ntaname)}
-                    className="accent-neutral-300"
-                  />
-                  <span>{n.ntaname}</span>
-                  <span className="ml-auto text-xs text-neutral-500">{n.boroname}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
+          groups.map(({ borough, items }) => (
+            <div key={borough}>
+              <div className="sticky top-0 bg-neutral-900 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+                {borough}
+              </div>
+              <ul>
+                {items.map((n) => (
+                  <li key={n.ntaname}>
+                    <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm hover:bg-neutral-800">
+                      <input
+                        type="checkbox"
+                        checked={draft.includes(n.ntaname)}
+                        onChange={() => toggle(n.ntaname)}
+                        className="accent-neutral-300"
+                      />
+                      <span>{n.ntaname}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))
         )}
       </div>
 
@@ -71,21 +97,6 @@ export default function NeighborhoodSelector({ neighborhoods, loading, selected,
           </button>
         )}
       </div>
-
-      <div className="flex items-center gap-3 border-t border-neutral-800 pt-3 text-xs text-neutral-400">
-        <Legend color="#ff4d4d" label="0-30" />
-        <Legend color="#ffff00" label="31-70" />
-        <Legend color="#00cc00" label="71-100" />
-      </div>
-    </div>
-  )
-}
-
-function Legend({ color, label }) {
-  return (
-    <div className="flex items-center gap-1.5">
-      <span className="h-3 w-3 rounded-sm" style={{ backgroundColor: color }} />
-      <span>{label}</span>
     </div>
   )
 }

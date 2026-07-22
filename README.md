@@ -5,8 +5,14 @@ with a tiered strategy note per parcel.
 
 ## Stack
 
-React, Vite, Tailwind CSS, `react-map-gl` (Mapbox GL JS). No backend, no
-external API key beyond Mapbox.
+React, Vite, Tailwind CSS, `react-map-gl` on MapLibre GL JS. No backend, no
+API keys, no billing risk — the map uses [MapLibre](https://maplibre.org)
+(a fully open-source fork of Mapbox GL JS) with
+[CARTO's free Dark Matter basemap](https://github.com/CartoDB/basemap-styles)
+instead of Mapbox, so there's no token to manage and no usage-based cost to
+watch. The spec named Mapbox GL JS specifically, but that pairs a per-load
+bill with no spend cap on the account — swapped for a stack with the same
+rendering engine lineage and zero cost ceiling.
 
 ## Data sources
 
@@ -51,12 +57,25 @@ as real replacements. Notable adaptations:
 
 - **Readiness (40%):** +20 oil heat, +20 built before 1960
 - **Impact (30%):** +15 GHG emissions above the loaded set's median, +15 disadvantaged community
-- **Feasibility (30%):** -15 in a 100-year flood zone, +15 lot area > 5,000 sqft
+- **Feasibility (30%):** +30 lot area > 5,000 sqft, -15 in a 100-year flood zone
+
+Lot size carries the full 30% feasibility weight on its own; flood zone is a
+risk flag rather than a positive feasibility attribute, so it's a deduction
+on top rather than splitting the 30% into two additive halves. That means
+the best possible parcel (every positive factor, no flood risk) lands at
+exactly 100, and a flood-zone parcel with nothing else going for it bottoms
+out at -15 (clamped to 1).
 
 The "city median" GHG threshold in the spec isn't attached to a named
 reference value, so it's computed from whichever parcels are currently
 loaded (i.e. neighborhood-relative, not citywide) — see the comment in
 `scoring.js`.
+
+Color reads as a three-band match indicator, not just a raw number:
+
+- **Red (0-30): out.**
+- **Orange (31-70): potential / future match.**
+- **Green (71-100): match.**
 
 ## Electrification strategy (sidebar)
 
@@ -74,16 +93,11 @@ instead of by a model.
 
 ```bash
 npm install
-cp .env.example .env.local
-# fill in .env.local, then:
 npm run dev
 ```
 
-Required in `.env.local`:
-
-- `VITE_MAPBOX_TOKEN` — a Mapbox public token (`pk.*`)
-
-Optional (raise Socrata's anonymous rate limits):
+No required env vars — the map needs no key. Optionally copy
+`.env.example` to `.env.local` to raise Socrata's anonymous rate limits:
 
 - `VITE_NYC_OPEN_DATA_APP_TOKEN`
 - `VITE_NYS_OPEN_DATA_APP_TOKEN`

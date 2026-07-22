@@ -43,35 +43,48 @@ export function calculateReadiness(parcel, ghgMedian) {
     breakdown.push({ label: 'Disadvantaged community (higher rebate eligibility)', points: 15 })
   }
 
-  // Feasibility (30%)
+  // Feasibility (30%). Lot size carries the full 30% on its own — flood zone
+  // is a risk flag, not a positive feasibility attribute, so it's a
+  // deduction on top rather than splitting the 30% into two additive halves.
+  // That makes the best possible parcel (oil heat + pre-1960 + high GHG +
+  // DAC + large lot + no flood risk) land at exactly 100, and a flood-zone
+  // parcel with nothing else going for it bottoms out at -15 (clamped to 1).
+  if (typeof parcel.lotarea === 'number' && parcel.lotarea > 5000) {
+    score += 30
+    breakdown.push({ label: 'Lot area > 5,000 sqft (space for heat pump units)', points: 30 })
+  }
   if (parcel.flood_zone === '100-year') {
     score -= 15
     breakdown.push({ label: '100-year flood zone (siting risk)', points: -15 })
-  }
-  if (typeof parcel.lotarea === 'number' && parcel.lotarea > 5000) {
-    score += 15
-    breakdown.push({ label: 'Lot area > 5,000 sqft (space for heat pump units)', points: 15 })
   }
 
   const clamped = Math.max(1, Math.min(100, score))
   return { score: clamped, breakdown }
 }
 
+// Three-band read of the score: a red/orange/green traffic light on whether
+// this parcel is a retrofit match at all, not just a raw number.
 export function scoreToColor(score) {
-  if (score <= 30) return '#ff4d4d'
-  if (score <= 70) return '#ffff00'
-  return '#00cc00'
+  if (score <= 30) return '#ff4d4d' // out
+  if (score <= 70) return '#ff8c00' // potential / future match
+  return '#00cc00' // match
 }
 
-// Mapbox expression: interpolate parcel fill color by readiness score.
+export function scoreToMatchLabel(score) {
+  if (score <= 30) return 'Out'
+  if (score <= 70) return 'Potential match'
+  return 'Match'
+}
+
+// Mapbox/MapLibre expression: interpolate parcel fill color by readiness score.
 export const READINESS_FILL_EXPRESSION = [
   'interpolate',
   ['linear'],
   ['get', 'readiness_score'],
   0, '#ff4d4d',
   30, '#ff4d4d',
-  31, '#ffff00',
-  70, '#ffff00',
+  31, '#ff8c00',
+  70, '#ff8c00',
   71, '#00cc00',
   100, '#00cc00',
 ]

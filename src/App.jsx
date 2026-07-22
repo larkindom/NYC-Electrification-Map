@@ -2,12 +2,20 @@ import { useState } from 'react'
 import NeighborhoodSelector from './components/NeighborhoodSelector'
 import ParcelMap from './components/ParcelMap'
 import Sidebar from './components/Sidebar'
+import SidebarErrorBoundary from './components/SidebarErrorBoundary'
 import { useParcelData } from './hooks/useParcelData'
 
 export default function App() {
   const { neighborhoods, neighborhoodsLoading, selected, applySelection, parcels, loading, error } =
     useParcelData()
-  const [activeParcel, setActiveParcel] = useState(null)
+  const [activeBBL, setActiveBBL] = useState(null)
+  // Map clicks only pass a BBL (see ParcelMap) — MapLibre's GeoJSON source
+  // serializes non-primitive feature properties (arrays/objects) to JSON
+  // strings internally, which previously crashed Sidebar's readiness
+  // breakdown .map() with no error boundary to catch it. Looking the full
+  // parcel back up from React state avoids touching GL-serialized properties
+  // at all.
+  const activeParcel = parcels.find((p) => p.bbl === activeBBL) ?? null
 
   return (
     <div className="flex h-screen bg-neutral-950">
@@ -37,11 +45,13 @@ export default function App() {
           </div>
         )}
 
-        <ParcelMap parcels={parcels} onSelectParcel={setActiveParcel} />
+        <ParcelMap parcels={parcels} onSelectParcel={setActiveBBL} />
 
         {activeParcel && (
           <div className="absolute right-0 top-0 h-full w-[360px] shadow-2xl">
-            <Sidebar parcel={activeParcel} onClose={() => setActiveParcel(null)} />
+            <SidebarErrorBoundary onClose={() => setActiveBBL(null)}>
+              <Sidebar parcel={activeParcel} onClose={() => setActiveBBL(null)} />
+            </SidebarErrorBoundary>
           </div>
         )}
       </main>

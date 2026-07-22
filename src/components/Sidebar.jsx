@@ -1,5 +1,5 @@
 import { getElectrificationStrategy } from '../lib/strategy'
-import { scoreToColor } from '../lib/scoring'
+import { scoreToColor, scoreToMatchLabel } from '../lib/scoring'
 
 export default function Sidebar({ parcel, onClose }) {
   if (!parcel) return null
@@ -25,7 +25,8 @@ export default function Sidebar({ parcel, onClose }) {
         >
           {parcel.readiness_score}
         </span>
-        <span className="text-sm text-neutral-400">Readiness score</span>
+        <span className="text-sm font-medium text-neutral-100">{scoreToMatchLabel(parcel.readiness_score)}</span>
+        <span className="text-sm text-neutral-400">· Readiness score</span>
       </div>
 
       <dl className="mt-4 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
@@ -63,6 +64,35 @@ export default function Sidebar({ parcel, onClose }) {
           Electrification strategy
         </h3>
         <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-200">{strategy}</p>
+      </div>
+
+      <div className="mt-4 border-t border-neutral-800 pt-3">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Data sources</h3>
+        <ul className="mt-2 space-y-1.5 text-xs text-neutral-400">
+          <li>
+            <span className="text-neutral-300">Address, year built, lot area, flood zone</span> — NYC PLUTO
+            (Dept. of City Planning). Flood flag is FEMA's preliminary 100-year floodplain designation.
+          </li>
+          <li>
+            <span className="text-neutral-300">Fuel type, GHG emissions</span> — NYC Local Law 84 energy
+            benchmarking. Only buildings large enough to require LL84 filing have this data; smaller
+            buildings show as unknown.
+          </li>
+          <li>
+            <span className="text-neutral-300">Boiler make</span> — DOB NOW: Safety Boiler filings, matched
+            via the building's LL84 record.
+          </li>
+          <li>
+            <span className="text-neutral-300">Disadvantaged community</span> — NY State Climate Justice
+            Working Group's Interim DAC (2020) tracts, matched by census tract. This match is approximate
+            (PLUTO's 2010-vintage tracts vs. the DAC dataset's newer boundaries).
+          </li>
+          <li>
+            <span className="text-neutral-300">Readiness score</span> — computed locally from the fields
+            above; the GHG comparison is against the median of the currently loaded neighborhood(s), not a
+            citywide figure.
+          </li>
+        </ul>
       </div>
     </div>
   )

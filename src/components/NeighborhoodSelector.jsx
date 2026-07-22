@@ -54,6 +54,8 @@ export default function NeighborhoodSelector({ neighborhoods, loading, selected,
       <div className="flex-1 overflow-y-auto rounded border border-neutral-800">
         {loading ? (
           <div className="p-4 text-sm text-neutral-500">Loading neighborhoods...</div>
+        ) : groups.length === 0 ? (
+          <div className="p-4 text-sm text-neutral-500">No neighborhoods match "{query}".</div>
         ) : (
           groups.map(({ borough, items }) => (
             <div key={borough}>

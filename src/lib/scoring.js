@@ -64,16 +64,22 @@ export function calculateReadiness(parcel, ghgMedian) {
 
 // Three-band read of the score: a red/orange/green traffic light on whether
 // this parcel is a retrofit match at all, not just a raw number.
+export const SCORE_TIERS = [
+  { id: 'red', max: 30, color: '#ff4d4d', label: 'Out' },
+  { id: 'orange', max: 70, color: '#ff8c00', label: 'Potential match' },
+  { id: 'green', max: 100, color: '#00cc00', label: 'Match' },
+]
+
+export function scoreTier(score) {
+  return SCORE_TIERS.find((t) => score <= t.max) ?? SCORE_TIERS[SCORE_TIERS.length - 1]
+}
+
 export function scoreToColor(score) {
-  if (score <= 30) return '#ff4d4d' // out
-  if (score <= 70) return '#ff8c00' // potential / future match
-  return '#00cc00' // match
+  return scoreTier(score).color
 }
 
 export function scoreToMatchLabel(score) {
-  if (score <= 30) return 'Out'
-  if (score <= 70) return 'Potential match'
-  return 'Match'
+  return scoreTier(score).label
 }
 
 // Mapbox/MapLibre expression: interpolate parcel fill color by readiness score.

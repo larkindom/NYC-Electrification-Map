@@ -1,24 +1,10 @@
-import { useEffect, useState } from 'react'
-import { auditParcel } from '../lib/auditor'
+import { getElectrificationStrategy } from '../lib/strategy'
 import { scoreToColor } from '../lib/scoring'
 
 export default function Sidebar({ parcel, onClose }) {
-  const [report, setReport] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-
-  useEffect(() => {
-    if (!parcel) return
-    setReport(null)
-    setError(null)
-    setLoading(true)
-    auditParcel(parcel)
-      .then(setReport)
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false))
-  }, [parcel])
-
   if (!parcel) return null
+
+  const strategy = getElectrificationStrategy(parcel)
 
   return (
     <div className="flex h-full w-full flex-col overflow-y-auto bg-neutral-900 p-4 text-neutral-100">
@@ -74,11 +60,9 @@ export default function Sidebar({ parcel, onClose }) {
 
       <div className="mt-4 border-t border-neutral-800 pt-3">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">
-          AI electrification strategy
+          Electrification strategy
         </h3>
-        {loading && <p className="mt-2 text-sm text-neutral-400">Generating audit...</p>}
-        {error && <p className="mt-2 text-sm text-red-400">{error}</p>}
-        {report && <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-200">{report}</p>}
+        <p className="mt-2 whitespace-pre-wrap text-sm text-neutral-200">{strategy}</p>
       </div>
     </div>
   )

@@ -1,11 +1,12 @@
 # NYC Electrification Readiness Map
 
-An agentic retrofit auditor: a React map of NYC parcels scored for heat pump
-electrification readiness, with an AI-generated audit report per parcel.
+A React map of NYC parcels scored for heat pump electrification readiness,
+with a tiered strategy note per parcel.
 
 ## Stack
 
-React, Vite, Tailwind CSS, `react-map-gl` (Mapbox GL JS), Anthropic SDK.
+React, Vite, Tailwind CSS, `react-map-gl` (Mapbox GL JS). No backend, no
+external API key beyond Mapbox.
 
 ## Data sources
 
@@ -57,6 +58,18 @@ reference value, so it's computed from whichever parcels are currently
 loaded (i.e. neighborhood-relative, not citywide) — see the comment in
 `scoring.js`.
 
+## Electrification strategy (sidebar)
+
+The spec's LLM-driven audit sidebar is replaced with a deterministic,
+template-based strategy note (`src/lib/strategy.js`) — no API key, no
+network call, no per-click cost. It buckets the readiness score into ten
+10-point tiers (1-10 up to 91-100), each with a canned headline and
+guidance, then appends parcel-specific notes built from data already on the
+parcel (fuel type, building age, flood siting, disadvantaged-community
+status). Same information areas the spec's system prompt asked for — fuel
+type, age-related challenges, flood-risk siting — just generated locally
+instead of by a model.
+
 ## Setup
 
 ```bash
@@ -69,22 +82,11 @@ npm run dev
 Required in `.env.local`:
 
 - `VITE_MAPBOX_TOKEN` — a Mapbox public token (`pk.*`)
-- `VITE_ANTHROPIC_API_KEY` — for the sidebar's AI audit
 
 Optional (raise Socrata's anonymous rate limits):
 
 - `VITE_NYC_OPEN_DATA_APP_TOKEN`
 - `VITE_NYS_OPEN_DATA_APP_TOKEN`
-
-## ⚠️ API key exposure on GitHub Pages
-
-This is a static, backend-less app. The Anthropic call in
-`src/lib/auditor.js` runs client-side with `dangerouslyAllowBrowser: true`,
-and Vite inlines `VITE_ANTHROPIC_API_KEY` into the built JS bundle — anyone
-who opens devtools on the deployed site can read it. That's acceptable for
-local/personal use. **Before deploying this publicly**, move the Anthropic
-call behind a small server-side proxy (a Cloudflare Worker or Vercel
-function work well) that holds the key instead of embedding it client-side.
 
 ## Deploy to GitHub Pages
 

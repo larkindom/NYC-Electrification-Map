@@ -15,50 +15,100 @@ export function median(values) {
   return nums.length % 2 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2
 }
 
+// Standard NYC rowhouse lot is ~1,900-2,000 sqft (the classic 20x100' lot;
+// NYC's own zoning minimum for attached residences is 1,700 sqft) — the
+// original 5,000 sqft threshold was far too high and excluded most of the
+// city's actual rowhouse/townhouse stock from ever getting feasibility
+// credit, regardless of how good a retrofit candidate they were otherwise.
+const MIN_LOT_AREA_SQFT = 2000
+
 export function calculateReadiness(parcel, ghgMedian) {
-  let score = 0
   const breakdown = []
+  let earned = 0
+  let applicableMax = 0
 
-  // Readiness (40%)
-  if (parcel.fuel_type === 'Oil') {
-    score += 20
-    breakdown.push({ label: 'Oil heat (end-of-life fuel source)', points: 20 })
-  }
-  if (typeof parcel.yearbuilt === 'number' && parcel.yearbuilt < 1960) {
-    score += 20
-    breakdown.push({ label: 'Built before 1960 (older mechanical systems)', points: 20 })
+  // Readiness: building age. Universally known from PLUTO (barring the rare
+  // parcel with no recorded year), so always counts toward the applicable
+  // max.
+  if (typeof parcel.yearbuilt === 'number') {
+    applicableMax += 20
+    if (parcel.yearbuilt < 1960) {
+      earned += 20
+      breakdown.push({ label: 'Built before 1960 (older mechanical systems)', points: 20 })
+    }
   }
 
-  // Impact (30%)
-  if (
-    typeof parcel.total_ghg_emissions === 'number' &&
-    typeof ghgMedian === 'number' &&
-    parcel.total_ghg_emissions > ghgMedian
-  ) {
-    score += 15
-    breakdown.push({ label: 'GHG emissions above neighborhood median', points: 15 })
+  // Readiness: fuel type. Only known for buildings large enough to require
+  // LL84 benchmarking filing — most of NYC's housing stock (small
+  // multifamily, rowhouses) isn't covered and will never have this field.
+  // Excluding it from the applicable max when unknown means a small
+  // building isn't penalized for data that structurally can't exist for it;
+  // including it in the max regardless (the old behavior) silently capped
+  // every non-benchmarked building's ceiling below what a benchmarked
+  // building could reach, rewarding data availability rather than actual
+  // readiness.
+  if (parcel.fuel_type) {
+    applicableMax += 20
+    if (parcel.fuel_type === 'Oil') {
+      earned += 20
+      breakdown.push({ label: 'Oil heat (end-of-life fuel source)', points: 20 })
+    }
+  } else {
+    breakdown.push({ label: 'Fuel type unknown (not LL84-benchmarked)', points: null })
   }
+
+  // Impact: GHG emissions vs. the loaded set's median. Same LL84 coverage
+  // gap as fuel type — excluded from the applicable max when unknown.
+  if (typeof parcel.total_ghg_emissions === 'number' && typeof ghgMedian === 'number') {
+    applicableMax += 15
+    if (parcel.total_ghg_emissions > ghgMedian) {
+      earned += 15
+      breakdown.push({ label: 'GHG emissions above neighborhood median', points: 15 })
+    }
+  } else {
+    breakdown.push({ label: 'GHG emissions unknown (not LL84-benchmarked)', points: null })
+  }
+
+  // Impact: disadvantaged community. Always computed (though the tract
+  // match itself is approximate — see socrata.js), so always applicable.
+  applicableMax += 15
   if (parcel.disadvantaged_community) {
-    score += 15
+    earned += 15
     breakdown.push({ label: 'Disadvantaged community (higher rebate eligibility)', points: 15 })
   }
 
-  // Feasibility (30%). Lot size carries the full 30% on its own — flood zone
-  // is a risk flag, not a positive feasibility attribute, so it's a
-  // deduction on top rather than splitting the 30% into two additive halves.
-  // That makes the best possible parcel (oil heat + pre-1960 + high GHG +
-  // DAC + large lot + no flood risk) land at exactly 100, and a flood-zone
-  // parcel with nothing else going for it bottoms out at -15 (clamped to 1).
-  if (typeof parcel.lotarea === 'number' && parcel.lotarea > 5000) {
-    score += 30
-    breakdown.push({ label: 'Lot area > 5,000 sqft (space for heat pump units)', points: 30 })
+  // Feasibility: lot area. Universally known from PLUTO, so always
+  // applicable. Threshold lowered to reflect an actual NYC rowhouse lot and
+  // what a ductless heat pump condenser needs, not a suburban-scale lot.
+  if (typeof parcel.lotarea === 'number') {
+    applicableMax += 30
+    if (parcel.lotarea > MIN_LOT_AREA_SQFT) {
+      earned += 30
+      breakdown.push({
+        label: `Lot area > ${MIN_LOT_AREA_SQFT.toLocaleString()} sqft (space for heat pump units)`,
+        points: 30,
+      })
+    }
   }
+
+  // Score is the percentage of *applicable* criteria actually earned, not a
+  // raw sum against a fixed 100 — the fix for the fairness problem above.
+  // Without this, two buildings with identical readiness on every criterion
+  // we can actually observe would score very differently just because one
+  // happens to be LL84-benchmarked and the other doesn't.
+  const base = applicableMax > 0 ? (earned / applicableMax) * 100 : 1
+
+  // Feasibility: flood zone is a risk flag, not a positive attribute, so
+  // it's a flat deduction applied after normalization rather than folded
+  // into the applicable-criteria ratio. Flood status is always known (PLUTO
+  // universal), so it never needs the availability treatment above.
+  let score = base
   if (parcel.flood_zone === '100-year') {
     score -= 15
     breakdown.push({ label: '100-year flood zone (siting risk)', points: -15 })
   }
 
-  const clamped = Math.max(1, Math.min(100, score))
+  const clamped = Math.max(1, Math.min(100, Math.round(score)))
   return { score: clamped, breakdown }
 }
 

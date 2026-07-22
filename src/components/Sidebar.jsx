@@ -45,16 +45,27 @@ export default function Sidebar({ parcel, onClose }) {
       {parcel.readiness_breakdown?.length > 0 && (
         <div className="mt-4">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">Score breakdown</h3>
+          <p className="mt-1 text-xs text-neutral-500">
+            Score is the percentage of applicable criteria met — criteria this parcel has no data for are
+            excluded rather than counted against it.
+          </p>
           <ul className="mt-1.5 space-y-1 text-sm">
-            {parcel.readiness_breakdown.map((b) => (
-              <li key={b.label} className="flex justify-between gap-2">
-                <span className="text-neutral-300">{b.label}</span>
-                <span className={b.points >= 0 ? 'text-green-400' : 'text-red-400'}>
-                  {b.points > 0 ? '+' : ''}
-                  {b.points}
-                </span>
-              </li>
-            ))}
+            {parcel.readiness_breakdown.map((b) =>
+              b.points === null ? (
+                <li key={b.label} className="flex justify-between gap-2 text-neutral-500">
+                  <span>{b.label}</span>
+                  <span>excluded</span>
+                </li>
+              ) : (
+                <li key={b.label} className="flex justify-between gap-2">
+                  <span className="text-neutral-300">{b.label}</span>
+                  <span className={b.points >= 0 ? 'text-green-400' : 'text-red-400'}>
+                    {b.points > 0 ? '+' : ''}
+                    {b.points}
+                  </span>
+                </li>
+              ),
+            )}
           </ul>
         </div>
       )}
@@ -89,8 +100,9 @@ export default function Sidebar({ parcel, onClose }) {
           </li>
           <li>
             <span className="text-neutral-300">Readiness score</span> — computed locally from the fields
-            above; the GHG comparison is against the median of the currently loaded neighborhood(s), not a
-            citywide figure.
+            above as a percentage of applicable criteria met, so a parcel with no LL84 data isn't penalized
+            for information it structurally can't have. The GHG comparison is against the median of the
+            currently loaded neighborhood(s), not a citywide figure.
           </li>
         </ul>
       </div>

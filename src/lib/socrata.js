@@ -142,6 +142,23 @@ function tractGeoid(boroughCode, ct2010) {
   return `36${countyFips}${tractSuffix}`
 }
 
+// The DAC dataset's `geoid` is a 12-digit *census block group* id
+// (state+county+tract+block group), not the 11-digit tract id tractGeoid()
+// above produces — an exact-match join between the two guaranteed zero
+// matches everywhere, full stop (verified: 0/2317 in Mott Haven, one of
+// NYC's most textbook disadvantaged communities — that's a format bug, not
+// data sparsity). A tract can contain several block groups, so this treats
+// a tract as DAC if ANY of its block groups are, by matching on the shared
+// 11-digit tract prefix. The whole dataset is tiny (~4,100 rows statewide),
+// so it's fetched and cached once rather than joined by BBL/tract per call.
+let dacTractSetCache = null
+async function fetchDacTractSet() {
+  if (dacTractSetCache) return dacTractSetCache
+  const rows = await soql(RESOURCES.dac, { $select: 'geoid', $limit: 10000 })
+  dacTractSetCache = new Set(rows.map((r) => String(r.geoid).slice(0, 11)))
+  return dacTractSetCache
+}
+
 // Lazy-load the neighborhood picker: just names + borough, no geometry yet.
 let ntaListCache = null
 export async function fetchNeighborhoods() {
@@ -235,14 +252,7 @@ export async function fetchParcelsForNeighborhoods(neighborhoods) {
     if (row.bin_number) boilerByBIN.set(String(row.bin_number), row)
   }
 
-  const geoids = parcelsInNeighborhood.map((p) => tractGeoid(p.borough, p.ct2010)).filter(Boolean)
-  const dacTracts = await soqlByIdsChunked(
-    RESOURCES.dac,
-    { $select: 'geoid', $limit: 5000 },
-    'geoid',
-    geoids,
-  )
-  const dacTractSet = new Set(dacTracts.map((r) => r.geoid))
+  const dacTractSet = await fetchDacTractSet()
 
   return parcelsInNeighborhood.map((pluto) => {
     const bbl = normalizeBBL(pluto.bbl)

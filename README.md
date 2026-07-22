@@ -50,21 +50,48 @@ as real replacements. Notable adaptations:
   PLUTO's tax-lot polygon geometry per parcel at neighborhood scale is a very
   large payload; a circle layer gets the same color-coded readiness view at a
   fraction of the data cost.
+- **LL84/boiler/DAC lookups are chunked.** Joining by an IN-list of an entire
+  neighborhood's BBLs (often 1,500-2,000+) produces a URL long enough that
+  the fetch fails outright — that failure was previously swallowed silently,
+  making every parcel look like it had zero LL84 coverage regardless of what
+  the dataset actually contains. `soqlByIdsChunked()` in `src/lib/socrata.js`
+  splits these into parallel batches of 300 ids to stay well under length
+  limits.
 
 ## Readiness Score
 
 `calculateReadiness()` in `src/lib/scoring.js`, 1-100:
 
-- **Readiness (40%):** +20 oil heat, +20 built before 1960
-- **Impact (30%):** +15 GHG emissions above the loaded set's median, +15 disadvantaged community
-- **Feasibility (30%):** +30 lot area > 5,000 sqft, -15 in a 100-year flood zone
+- **Readiness:** +20 oil heat, +20 built before 1960
+- **Impact:** +15 GHG emissions above the loaded set's median, +15 disadvantaged community
+- **Feasibility:** +30 lot area > 2,000 sqft, -15 in a 100-year flood zone
 
-Lot size carries the full 30% feasibility weight on its own; flood zone is a
-risk flag rather than a positive feasibility attribute, so it's a deduction
-on top rather than splitting the 30% into two additive halves. That means
-the best possible parcel (every positive factor, no flood risk) lands at
-exactly 100, and a flood-zone parcel with nothing else going for it bottoms
-out at -15 (clamped to 1).
+**The score is a percentage of *applicable* criteria met, not a raw sum
+against a fixed 100.** Fuel type and GHG emissions only exist for buildings
+large enough to require LL84 benchmarking filing — most of NYC's housing
+stock (rowhouses, small multifamily) isn't covered and will never have this
+data. Counting those two criteria (35 of the possible weight) against every
+parcel's max regardless of data availability meant non-benchmarked buildings
+could never fully compete with benchmarked ones on equal footing, no matter
+how strong their signals were on everything we *could* observe — it was
+rewarding data availability, not actual readiness. Each parcel's score is now
+computed only over the criteria we have real data for; a small building
+outside LL84's threshold is judged on age, lot size, DAC status, and flood
+risk alone, rescaled to the full 0-100 range, rather than being capped below
+a benchmarked building by default. `readiness_breakdown` entries for
+inapplicable criteria show up with `points: null` ("excluded") rather than
+silently missing.
+
+The lot-area threshold was also lowered from 5,000 to 2,000 sqft — a
+standard NYC rowhouse lot is ~1,900-2,000 sqft (the classic 20x100' lot;
+NYC's own zoning minimum for attached residences is 1,700 sqft), and a
+ductless heat pump condenser doesn't need suburban-scale outdoor space. The
+old threshold excluded most of the city's actual rowhouse stock from ever
+earning feasibility credit.
+
+Flood zone remains a flat deduction applied after normalization rather than
+folded into the applicable-criteria ratio, since flood status is always
+known (PLUTO-universal) and is a risk flag rather than a positive attribute.
 
 The "city median" GHG threshold in the spec isn't attached to a named
 reference value, so it's computed from whichever parcels are currently

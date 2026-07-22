@@ -79,21 +79,58 @@ function soqlInList(values) {
   return values.map((v) => `'${String(v).replace(/'/g, "''")}'`).join(',')
 }
 
+// A neighborhood-sized IN-list (thousands of BBLs) blows past the URL length
+// browsers/servers will accept — the fetch fails outright rather than
+// erroring gracefully. That failure was previously being swallowed by a
+// blanket `.catch(() => [])`, which silently produced an EMPTY join for
+// every enrichment dataset (LL84, boilers, DAC) on any normal-sized
+// neighborhood: every parcel showed "unknown" fuel type and GHG emissions,
+// not because the data doesn't exist, but because the request to fetch it
+// never went out successfully. Splitting the IN-list into chunks well under
+// the length limit and issuing them in parallel fixes that; 300 ids keeps
+// each request URL a few thousand characters, comfortably safe.
+const IN_LIST_CHUNK_SIZE = 300
+
+async function soqlByIdsChunked(resource, params, fieldName, ids) {
+  const unique = [...new Set(ids)]
+  if (!unique.length) return []
+
+  const chunks = []
+  for (let i = 0; i < unique.length; i += IN_LIST_CHUNK_SIZE) {
+    chunks.push(unique.slice(i, i + IN_LIST_CHUNK_SIZE))
+  }
+
+  const results = await Promise.all(
+    chunks.map((chunk) =>
+      soql(resource, { ...params, $where: `${fieldName} IN (${soqlInList(chunk)})` }).catch((err) => {
+        console.error(`Socrata chunked lookup failed for ${resource.id}:`, err)
+        return []
+      }),
+    ),
+  )
+  return results.flat()
+}
+
 // Datasets disagree on BBL shape: PLUTO stores it as a padded float string
-// ("1015590019.00000000"), LL84 as a clean 10-digit string. Both normalize
-// to the same 10-digit key here.
+// ("1015590019.00000000"), LL84 as a clean 10-digit string (or, for some
+// filings, a dash-separated "B-BBBBB-LLLL" format, or multiple lots joined
+// with a semicolon for one filing covering several tax lots — that last
+// form doesn't normalize to a single valid BBL and is intentionally dropped
+// rather than mismatched). All of the clean/dash forms normalize here.
 export function normalizeBBL(bbl) {
   if (bbl === null || bbl === undefined) return null
-  const intPart = String(bbl).trim().split('.')[0].replace(/\D/g, '')
-  if (!intPart) return null
-  return intPart.padStart(10, '0')
+  const raw = String(bbl).trim()
+  if (raw.includes(';')) return null // multi-lot filing, not a single BBL
+  const intPart = raw.split('.')[0].replace(/\D/g, '')
+  if (intPart.length !== 10) return null
+  return intPart
 }
 
 // Best-effort census-tract GEOID for the DAC join. NYC PLUTO's `ct2010`
 // stores the whole tract number without the Census Bureau's implied *100
 // suffix (tract "136" -> FIPS suffix "013600"), and DAC tract boundaries are
 // a newer (2020-cycle) vintage than PLUTO's 2010 tracts, so this is an
-// approximate match — good enough for a readiness signal, not for anything
+// approximate match — good enough as a readiness signal, not for anything
 // compliance-grade.
 function tractGeoid(boroughCode, ct2010) {
   if (!ct2010) return null
@@ -162,44 +199,49 @@ export async function fetchParcelsForNeighborhoods(neighborhoods) {
 
   const bbls = parcelsInNeighborhood.map((p) => normalizeBBL(p.bbl)).filter(Boolean)
 
-  const ll84Rows = bbls.length
-    ? await soql(RESOURCES.ll84, {
-        $select:
-          'nyc_borough_block_and_lot,nyc_building_identification,total_location_based_ghg,fuel_oil_1_use_kbtu,fuel_oil_2_use_kbtu,fuel_oil_4_use_kbtu,fuel_oil_5_6_use_kbtu,natural_gas_use_kbtu',
-        $where: `nyc_borough_block_and_lot IN (${soqlInList(bbls)})`,
-        $limit: 10000,
-      }).catch(() => [])
-    : []
+  // LL84 has one row per property per *filing year* — several rows can
+  // share a BBL. Keep only the most recent report_year per BBL so GHG/fuel
+  // figures reflect current conditions, not whichever year happened to load.
+  const ll84Rows = await soqlByIdsChunked(
+    RESOURCES.ll84,
+    {
+      $select:
+        'nyc_borough_block_and_lot,nyc_building_identification,report_year,total_location_based_ghg,fuel_oil_1_use_kbtu,fuel_oil_2_use_kbtu,fuel_oil_4_use_kbtu,fuel_oil_5_6_use_kbtu,natural_gas_use_kbtu',
+      $limit: 5000,
+    },
+    'nyc_borough_block_and_lot',
+    bbls,
+  )
 
   const ll84ByBBL = new Map()
   for (const row of ll84Rows) {
     const key = normalizeBBL(row.nyc_borough_block_and_lot)
-    if (key) ll84ByBBL.set(key, row)
+    if (!key) continue
+    const existing = ll84ByBBL.get(key)
+    if (!existing || Number(row.report_year) >= Number(existing.report_year)) {
+      ll84ByBBL.set(key, row)
+    }
   }
 
-  const bins = ll84Rows.map((r) => r.nyc_building_identification).filter(Boolean)
-  const boilerRows = bins.length
-    ? await soql(RESOURCES.boilers, {
-        $select: 'bin_number,boiler_make',
-        $where: `bin_number IN (${soqlInList(bins)})`,
-        $limit: 10000,
-      }).catch(() => [])
-    : []
+  const bins = [...ll84ByBBL.values()].map((r) => r.nyc_building_identification).filter(Boolean)
+  const boilerRows = await soqlByIdsChunked(
+    RESOURCES.boilers,
+    { $select: 'bin_number,boiler_make', $limit: 5000 },
+    'bin_number',
+    bins,
+  )
   const boilerByBIN = new Map()
   for (const row of boilerRows) {
     if (row.bin_number) boilerByBIN.set(String(row.bin_number), row)
   }
 
-  const geoids = parcelsInNeighborhood
-    .map((p) => tractGeoid(p.borough, p.ct2010))
-    .filter(Boolean)
-  const dacTracts = geoids.length
-    ? await soql(RESOURCES.dac, {
-        $select: 'geoid',
-        $where: `geoid IN (${soqlInList(geoids)})`,
-        $limit: 10000,
-      }).catch(() => [])
-    : []
+  const geoids = parcelsInNeighborhood.map((p) => tractGeoid(p.borough, p.ct2010)).filter(Boolean)
+  const dacTracts = await soqlByIdsChunked(
+    RESOURCES.dac,
+    { $select: 'geoid', $limit: 5000 },
+    'geoid',
+    geoids,
+  )
   const dacTractSet = new Set(dacTracts.map((r) => r.geoid))
 
   return parcelsInNeighborhood.map((pluto) => {

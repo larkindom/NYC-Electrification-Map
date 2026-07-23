@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import AddressSearch from './components/AddressSearch'
 import NeighborhoodSelector from './components/NeighborhoodSelector'
 import ParcelMap from './components/ParcelMap'
 import ScoreLegend, { countByTier } from './components/ScoreLegend'
@@ -10,10 +11,28 @@ import { scoreTier } from './lib/scoring'
 const ALL_TIERS_ON = { red: true, orange: true, green: true }
 
 export default function App() {
-  const { neighborhoods, neighborhoodsLoading, selected, applySelection, parcels, loading, error } =
-    useParcelData()
+  const {
+    neighborhoods,
+    neighborhoodsLoading,
+    selected,
+    applySelection,
+    parcels,
+    loading,
+    error,
+    loadAddressParcel,
+    addressSearchLoading,
+    addressSearchError,
+  } = useParcelData()
   const [activeBBL, setActiveBBL] = useState(null)
   const [activeTiers, setActiveTiers] = useState(ALL_TIERS_ON)
+  const mapRef = useRef(null)
+
+  const handleAddressSelect = async (candidate) => {
+    const parcel = await loadAddressParcel(candidate.bbl)
+    if (!parcel) return
+    mapRef.current?.flyToCoordinates(parcel.longitude, parcel.latitude)
+    setActiveBBL(parcel.bbl)
+  }
   // Map clicks only pass a BBL (see ParcelMap) — MapLibre's GeoJSON source
   // serializes non-primitive feature properties (arrays/objects) to JSON
   // strings internally, which previously crashed Sidebar's readiness
@@ -31,13 +50,22 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-neutral-950">
-      <aside className="h-full min-h-0 w-80 shrink-0 border-r border-neutral-800">
-        <NeighborhoodSelector
-          neighborhoods={neighborhoods}
-          loading={neighborhoodsLoading}
-          selected={selected}
-          onApply={applySelection}
-        />
+      <aside className="flex h-full min-h-0 w-80 shrink-0 flex-col border-r border-neutral-800">
+        <div className="min-h-0 flex-1">
+          <NeighborhoodSelector
+            neighborhoods={neighborhoods}
+            loading={neighborhoodsLoading}
+            selected={selected}
+            onApply={applySelection}
+          />
+        </div>
+        <div className="shrink-0 border-t border-neutral-800 p-4">
+          <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500">
+            Or search an address
+          </h2>
+          <AddressSearch onSelect={handleAddressSelect} loading={addressSearchLoading} />
+          {addressSearchError && <p className="mt-2 text-xs text-red-400">{addressSearchError}</p>}
+        </div>
       </aside>
 
       <main className="relative min-w-0 flex-1">
@@ -57,7 +85,7 @@ export default function App() {
           </div>
         )}
 
-        <ParcelMap parcels={visibleParcels} onSelectParcel={setActiveBBL} />
+        <ParcelMap ref={mapRef} parcels={visibleParcels} onSelectParcel={setActiveBBL} />
 
         {parcels.length > 0 && (
           <div className="absolute bottom-4 left-4 z-10">

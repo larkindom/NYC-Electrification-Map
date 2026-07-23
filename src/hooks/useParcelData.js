@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { fetchNeighborhoods, fetchParcelsForNeighborhoods } from '../lib/socrata'
+import { fetchNeighborhoods, fetchParcelByBBL, fetchParcelsForNeighborhoods } from '../lib/socrata'
 import { calculateReadiness, median } from '../lib/scoring'
 
 export function useParcelData() {
@@ -9,6 +9,8 @@ export function useParcelData() {
   const [parcels, setParcels] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [addressSearchLoading, setAddressSearchLoading] = useState(false)
+  const [addressSearchError, setAddressSearchError] = useState(null)
 
   useEffect(() => {
     fetchNeighborhoods()
@@ -48,6 +50,40 @@ export function useParcelData() {
     [loadParcels],
   )
 
+  // A searched address has no neighborhood context to compute a GHG median
+  // against. Falling back to the median of whatever parcel set is already
+  // loaded is a reasonable proxy when one exists (still "neighborhood
+  // relative", just from a previous selection); with nothing loaded there's
+  // no defensible reference point, so the GHG-vs-median criterion is left
+  // out of the denominator entirely rather than guessing — same "excluded,
+  // not penalized" treatment calculateReadiness already gives missing data.
+  const loadAddressParcel = useCallback(
+    async (bbl) => {
+      setAddressSearchLoading(true)
+      setAddressSearchError(null)
+      try {
+        const parcel = await fetchParcelByBBL(bbl)
+        if (!parcel) {
+          setAddressSearchError('Could not load that parcel.')
+          return null
+        }
+
+        const ghgMedian = parcels.length ? median(parcels.map((p) => p.total_ghg_emissions)) : undefined
+        const { score, breakdown } = calculateReadiness(parcel, ghgMedian)
+        const scored = { ...parcel, readiness_score: score, readiness_breakdown: breakdown }
+
+        setParcels((prev) => [...prev.filter((p) => p.bbl !== scored.bbl), scored])
+        return scored
+      } catch (err) {
+        setAddressSearchError(err.message)
+        return null
+      } finally {
+        setAddressSearchLoading(false)
+      }
+    },
+    [parcels],
+  )
+
   return {
     neighborhoods,
     neighborhoodsLoading,
@@ -56,5 +92,8 @@ export function useParcelData() {
     parcels,
     loading,
     error,
+    loadAddressParcel,
+    addressSearchLoading,
+    addressSearchError,
   }
 }

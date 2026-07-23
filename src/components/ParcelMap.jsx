@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react'
+import { forwardRef, useImperativeHandle, useMemo, useRef } from 'react'
 import Map, { Source, Layer } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 import { READINESS_FILL_EXPRESSION } from '../lib/scoring'
@@ -46,9 +46,17 @@ function parcelsToGeoJSON(parcels) {
   }
 }
 
-export default function ParcelMap({ parcels, onSelectParcel }) {
+const SEARCH_RESULT_ZOOM = 17
+
+const ParcelMap = forwardRef(function ParcelMap({ parcels, onSelectParcel }, ref) {
   const mapRef = useRef(null)
   const geojson = useMemo(() => parcelsToGeoJSON(parcels), [parcels])
+
+  useImperativeHandle(ref, () => ({
+    flyToCoordinates(longitude, latitude) {
+      mapRef.current?.flyTo({ center: [longitude, latitude], zoom: SEARCH_RESULT_ZOOM })
+    },
+  }))
 
   return (
     <Map
@@ -71,4 +79,6 @@ export default function ParcelMap({ parcels, onSelectParcel }) {
       </Source>
     </Map>
   )
-}
+})
+
+export default ParcelMap

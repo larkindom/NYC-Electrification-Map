@@ -182,39 +182,17 @@ async function fetchNeighborhoodGeometries(neighborhoods) {
   return rows
 }
 
-// Full pipeline: resolve selected neighborhoods to geometry, pull a
-// borough+bbox-bounded slice of PLUTO, keep only parcels that truly fall
-// inside the neighborhood polygon(s), then left-join LL84 / boiler / DAC
-// data onto that parcel list by BBL so every parcel still renders even when
-// the enrichment datasets have no match.
-export async function fetchParcelsForNeighborhoods(neighborhoods) {
-  if (!neighborhoods?.length) return []
+const PLUTO_SELECT = 'bbl,borough,ct2010,yearbuilt,lotarea,address,zipcode,latitude,longitude,pfirm15_flag'
 
-  const ntaFeatures = await fetchNeighborhoodGeometries(neighborhoods)
-  if (!ntaFeatures.length) return []
+// Left-join LL84 / boiler / DAC data onto a list of raw PLUTO rows by BBL, so
+// every parcel still renders even when the enrichment datasets have no
+// match. Shared by both the neighborhood pipeline and single-address lookup
+// so the join logic (and its LL84-most-recent-year, BIN, and tract-geoid
+// handling) lives in exactly one place.
+async function enrichPlutoRows(plutoRows) {
+  if (!plutoRows.length) return []
 
-  const boroughCodes = [
-    ...new Set(ntaFeatures.map((f) => BOROUGH_CODE_BY_NAME[f.boroname]).filter(Boolean)),
-  ]
-  const bounds = mergeBounds(ntaFeatures.map((f) => geometryBounds(f.the_geom)))
-
-  const plutoRows = await soql(RESOURCES.pluto, {
-    $select: 'bbl,borough,ct2010,yearbuilt,lotarea,address,latitude,longitude,pfirm15_flag',
-    $where: [
-      `borough IN (${soqlInList(boroughCodes)})`,
-      `latitude between ${bounds.minLat} and ${bounds.maxLat}`,
-      `longitude between ${bounds.minLng} and ${bounds.maxLng}`,
-      'latitude IS NOT NULL',
-    ].join(' AND '),
-    $limit: 20000,
-  })
-
-  const parcelsInNeighborhood = plutoRows.filter((p) =>
-    ntaFeatures.some((f) => pointInGeometry(Number(p.longitude), Number(p.latitude), f.the_geom)),
-  )
-  if (!parcelsInNeighborhood.length) return []
-
-  const bbls = parcelsInNeighborhood.map((p) => normalizeBBL(p.bbl)).filter(Boolean)
+  const bbls = plutoRows.map((p) => normalizeBBL(p.bbl)).filter(Boolean)
 
   // LL84 has one row per property per *filing year* — several rows can
   // share a BBL. Keep only the most recent report_year per BBL so GHG/fuel
@@ -254,7 +232,7 @@ export async function fetchParcelsForNeighborhoods(neighborhoods) {
 
   const dacTractSet = await fetchDacTractSet()
 
-  return parcelsInNeighborhood.map((pluto) => {
+  return plutoRows.map((pluto) => {
     const bbl = normalizeBBL(pluto.bbl)
     const ll84 = ll84ByBBL.get(bbl)
     const boiler = ll84?.nyc_building_identification
@@ -275,6 +253,7 @@ export async function fetchParcelsForNeighborhoods(neighborhoods) {
     return {
       bbl,
       address: pluto.address,
+      zipcode: pluto.zipcode ?? null,
       // PLUTO uses 0 (not null) for "year unknown" — treat it the same as missing.
       yearbuilt: Number(pluto.yearbuilt) > 0 ? Number(pluto.yearbuilt) : null,
       lotarea: pluto.lotarea ? Number(pluto.lotarea) : null,
@@ -287,4 +266,90 @@ export async function fetchParcelsForNeighborhoods(neighborhoods) {
       disadvantaged_community: dacTractSet.has(tractGeoid(pluto.borough, pluto.ct2010)),
     }
   })
+}
+
+// Full pipeline: resolve selected neighborhoods to geometry, pull a
+// borough+bbox-bounded slice of PLUTO, keep only parcels that truly fall
+// inside the neighborhood polygon(s), then left-join LL84 / boiler / DAC
+// data onto that parcel list by BBL so every parcel still renders even when
+// the enrichment datasets have no match.
+export async function fetchParcelsForNeighborhoods(neighborhoods) {
+  if (!neighborhoods?.length) return []
+
+  const ntaFeatures = await fetchNeighborhoodGeometries(neighborhoods)
+  if (!ntaFeatures.length) return []
+
+  const boroughCodes = [
+    ...new Set(ntaFeatures.map((f) => BOROUGH_CODE_BY_NAME[f.boroname]).filter(Boolean)),
+  ]
+  const bounds = mergeBounds(ntaFeatures.map((f) => geometryBounds(f.the_geom)))
+
+  const plutoRows = await soql(RESOURCES.pluto, {
+    $select: PLUTO_SELECT,
+    $where: [
+      `borough IN (${soqlInList(boroughCodes)})`,
+      `latitude between ${bounds.minLat} and ${bounds.maxLat}`,
+      `longitude between ${bounds.minLng} and ${bounds.maxLng}`,
+      'latitude IS NOT NULL',
+    ].join(' AND '),
+    $limit: 20000,
+  })
+
+  const parcelsInNeighborhood = plutoRows.filter((p) =>
+    ntaFeatures.some((f) => pointInGeometry(Number(p.longitude), Number(p.latitude), f.the_geom)),
+  )
+  if (!parcelsInNeighborhood.length) return []
+
+  return enrichPlutoRows(parcelsInNeighborhood)
+}
+
+const BOROUGH_NAME_BY_CODE = {
+  MN: 'Manhattan',
+  BX: 'Bronx',
+  BK: 'Brooklyn',
+  QN: 'Queens',
+  SI: 'Staten Island',
+}
+
+// Live-typeahead lookup against PLUTO's address field for the sidebar
+// address search — case-insensitive substring match, borough/zipcode
+// included so results can be disambiguated (street addresses alone repeat
+// across NYC's 5 boroughs).
+export async function searchAddressCandidates(query) {
+  const q = query.trim()
+  if (!q) return []
+
+  const escaped = q.replace(/'/g, "''")
+  const rows = await soql(RESOURCES.pluto, {
+    $select: 'bbl,address,borough,zipcode,latitude,longitude',
+    $where: `upper(address) like upper('%${escaped}%') AND latitude IS NOT NULL`,
+    $limit: 8,
+  })
+
+  return rows
+    .map((r) => ({
+      bbl: normalizeBBL(r.bbl),
+      address: r.address,
+      borough: BOROUGH_NAME_BY_CODE[r.borough] ?? r.borough,
+      zipcode: r.zipcode ?? null,
+      latitude: Number(r.latitude),
+      longitude: Number(r.longitude),
+    }))
+    .filter((r) => r.bbl)
+}
+
+// Single-parcel enrichment for a searched address — same PLUTO -> LL84 ->
+// boiler -> DAC join as the neighborhood pipeline, just for one BBL.
+// soqlByIdsChunked handles a 1-element id list fine, so no separate code
+// path is needed for the enrichment step itself.
+export async function fetchParcelByBBL(bbl) {
+  const rows = await soql(RESOURCES.pluto, {
+    $select: PLUTO_SELECT,
+    $where: `starts_with(bbl, '${bbl}')`,
+    $limit: 1,
+  })
+  if (!rows.length) return null
+
+  const [enriched] = await enrichPlutoRows(rows)
+  return enriched ?? null
 }
